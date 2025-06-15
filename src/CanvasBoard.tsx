@@ -13,7 +13,6 @@ const CanvasBoard: React.FC = () => {
 
     socket.onopen = () => {
         console.log("Connected to WebSocket");
-        //socket.send(JSON.stringify({ x: 5, y: 5, color: "#000000" }));
     };
 
     socket.onmessage = (event) => {
@@ -24,11 +23,24 @@ const CanvasBoard: React.FC = () => {
     socket.onclose = () => console.warn("WebSocket closed");
 
     socket.onmessage = (msg) => {
-      const { x, y, color } = JSON.parse(msg.data);
-      const ctx = canvasRef.current?.getContext('2d');
-      if (ctx) {
-        ctx.fillStyle = color;
-        ctx.fillRect(x * PIXEL_SIZE, y * PIXEL_SIZE, PIXEL_SIZE, PIXEL_SIZE);
+      const parsedMsg = JSON.parse(msg.data);
+
+      const handlePixelRecolor = (x: number, y: number, color: string) => {        
+        const ctx = canvasRef.current?.getContext('2d');
+        if (ctx) {
+          ctx.fillStyle = color;
+          ctx.fillRect(x * PIXEL_SIZE, y * PIXEL_SIZE, PIXEL_SIZE, PIXEL_SIZE);
+        }
+      }
+
+      if (Array.isArray(parsedMsg)) {
+        parsedMsg.forEach((msg) => {
+          const { x, y, color } = msg;
+          handlePixelRecolor(x, y, color);
+        })
+      } else {
+        const { x, y, color } = parsedMsg;
+        handlePixelRecolor(x, y, color)
       }
     };
 
