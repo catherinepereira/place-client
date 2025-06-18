@@ -1,43 +1,65 @@
 import React from "react";
-import { Color, HexColorData } from "./ColorData";
+import { ColorIndex, PaletteName, Palettes } from "./ColorData";
 
 interface Props {
-	SelectedColor: Color;
-	OnSelectedColor: (color: Color) => void;
+	SelectedColor: ColorIndex;
+	SelectedPalette: PaletteName;
+	OnSelectedColor: (color: ColorIndex) => void;
+	OnSelectedPalette: (palette: PaletteName) => void;
 }
 
 const NumberColumns = 4;
 
 const ColorPalette: React.FC<Props> = (props: Props) => {
-	const colors = Object.values(Color).filter(
-		(value) => typeof value === "number"
-	) as Color[];
+	const paletteOptions = Object.keys(Palettes);
+	const palette = Palettes[props.SelectedPalette];
 
 	return (
-		<div
-			style={{
-				display: "grid",
-				gridTemplateColumns: `repeat(${NumberColumns}, 40px)`,
-				gap: "4px",
-			}}
-		>
-			{colors.map((color, i) => (
+		<div>
+			{paletteOptions.map((name, _) => (
 				<div
-					key={i}
-					title={color.toString()}
+					key={name}
+					title={name.toString()}
 					style={{
-						width: 40,
+						width: 80,
 						height: 40,
-						backgroundColor: HexColorData[color],
+						backgroundColor: "#808080",
 						border:
-							props.SelectedColor === color
+							props.SelectedPalette === name
 								? "4px solid #333"
 								: "1px solid #333",
 						boxSizing: "border-box",
 					}}
-					onClick={() => props.OnSelectedColor(color)}
+					onClick={() => props.OnSelectedPalette(name as PaletteName)}
 				/>
 			))}
+
+			<div
+				style={{
+					display: "grid",
+					gridTemplateColumns: `repeat(${NumberColumns}, 40px)`,
+					gap: "4px",
+				}}
+			>
+				{palette.map((color, index) => (
+					<div
+						key={index}
+						title={color.toString()}
+						style={{
+							width: 40,
+							height: 40,
+							backgroundColor:
+								Palettes[props.SelectedPalette][index],
+							border:
+								props.SelectedColor === index
+									? "4px solid #333"
+									: "1px solid #333",
+							boxSizing: "border-box",
+						}}
+						onClick={() => props.OnSelectedColor(index)}
+					/>
+				))}
+			</div>
 		</div>
 	);
 };

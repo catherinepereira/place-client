@@ -1,121 +1,129 @@
 import React, { useEffect, useRef, useState } from "react";
-import { Color, HexColorData, hexToRgb, rgbToHex } from "./ColorData";
+
+import { ColorIndex, PaletteName, Palettes } from "./ColorData";
 import ColorPalette from "./ColorPalette";
 
-const CANVAS_SIZE = 1000;
+const CANVAS_WIDTH = 1000;
+const CANVAS_HEIGHT = 1000;
 const PIXEL_SIZE = 10;
 
-interface PixelData {
-  x: number;
-  y: number;
-  r: number;
-  g: number;
-  b: number;
-}
-
 const CanvasBoard: React.FC = () => {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const [ws, setWs] = useState<WebSocket | null>(null);
-  const [selectedColor, setSelectedColor] = useState<Color>(Color.Pink);
+	const canvasRef = useRef<HTMLCanvasElement>(null);
+	const [webSocket, setWebSocket] = useState<WebSocket | null>(null);
+	const [selectedColor, setSelectedColor] = useState<ColorIndex>(0);
+	const [selectedPalette, setSelectedPalette] =
+		useState<PaletteName>("default");
 
-  const packMessage = (data: PixelData): string => {
-    const { x, y, r, g, b } = data;
-    const packedRgb = (r << 16) | (g << 8) | b;
+	const packMessage = (x: number, y: number, color: number): Uint8Array => {
+		if (x < 0 || x > 1000) throw new Error("x coord is out of range");
+		if (y < 0 || y > 1000) throw new Error("y coord is out of range");
 
-    const message = `${x},${y},${packedRgb}`;
-    return message;
-  };
+		if (color < 0 || color > 15) {
+			throw new Error("Color must be 4-bit (0–15)");
+		}
 
-  const unpackMessage = (message: string): PixelData => {
-    const messageSplit = message.split(",");
-    const x = Number(messageSplit[0]);
-    const y = Number(messageSplit[1]);
-    const packedRgb = Number(messageSplit[2]);
+		const msg = new Uint8Array(5);
+		const view = new DataView(msg.buffer);
 
-    const r = (packedRgb >> 16) & 0xff;
-    const g = (packedRgb >> 8) & 0xff;
-    const b = packedRgb & 0xff;
+		view.setUint16(0, x, true);
+		view.setUint16(2, y, true);
+		view.setUint8(4, color & 0x0f);
 
-    return {
-      x,
-      y,
-      r,
-      g,
-      b,
-    };
-  };
+		return msg;
+	};
 
-  const sendMessage = (message: string) => {
-    if (ws) ws.send(JSON.stringify(message));
-  };
+	const unpackMessage = (
+		buffer: ArrayBuffer
+	): { x: number; y: number; color: number } => {
+		const view = new DataView(buffer);
 
-  useEffect(() => {
-    const socket = new WebSocket("ws://localhost:8080/ws");
-    setWs(socket);
+		const x = view.getUint16(0, true);
+		const y = view.getUint16(2, true);
+		const color = view.getUint8(4) & 0x0f;
 
-    const handlePixelData = (data: PixelData) => {
-      const ctx = canvasRef.current?.getContext("2d");
+		return { x, y, color };
+	};
 
-      if (ctx) {
-        const { x, y, r, g, b } = data;
-        ctx.fillStyle = rgbToHex(r, g, b);
-        ctx.fillRect(x * PIXEL_SIZE, y * PIXEL_SIZE, PIXEL_SIZE, PIXEL_SIZE);
-      }
-    };
+	const sendMessage = (x: number, y: number, color: number) => {
+		const packedMessage = packMessage(x, y, color);
+		if (webSocket) {
+			console.log("Sending message", packedMessage);
+			webSocket.send(packedMessage);
+		}
+	};
 
-    socket.onopen = () => console.log("Connected to WebSocket.");
-    socket.onmessage = (event) => console.log("On message event:", event.data);
-    socket.onerror = (e) => console.error("WebSocket error:", e);
-    socket.onclose = () => console.warn("WebSocket closed.");
+	useEffect(() => {
+		const socket = new WebSocket("ws://localhost:8080/ws");
+		setWebSocket(socket);
 
-    socket.onmessage = (msg) => {
-      const parsedMsg = JSON.parse(msg.data);
+		const handlePixelData = (x: number, y: number, color: number) => {
+			const ctx = canvasRef.current?.getContext("2d");
 
-      if (Array.isArray(parsedMsg)) {
-        parsedMsg.forEach((msg) => {
-          const pixelData = unpackMessage(msg);
-          handlePixelData(pixelData);
-        });
-      } else {
-        const pixelData = unpackMessage(parsedMsg);
-        handlePixelData(pixelData);
-      }
-    };
+			if (ctx) {
+				ctx.fillStyle = Palettes[selectedPalette][color];
+				ctx.fillRect(
+					x * PIXEL_SIZE,
+					y * PIXEL_SIZE,
+					PIXEL_SIZE,
+					PIXEL_SIZE
+				);
+			}
+		};
 
-    return () => socket.close();
-  }, []);
+		socket.onopen = () => console.log("Connected to WebSocket.");
+		socket.onmessage = (event) =>
+			console.log("On message event:", event.data);
+		socket.onerror = (e) => console.error("WebSocket error:", e);
+		socket.onclose = () => console.warn("WebSocket closed.");
 
-  const onClick = (e: React.MouseEvent) => {
-    if (!ws) return;
-    if (!canvasRef) return;
-    const rect = canvasRef.current!.getBoundingClientRect();
+		socket.onmessage = (event) => {
+			const buffer = event.data;
 
-    // Ensure coords are within bounds
-    const x = Math.floor((e.clientX - rect.left) / PIXEL_SIZE);
-    const y = Math.floor((e.clientY - rect.top) / PIXEL_SIZE);
+			if (buffer instanceof Blob) {
+				buffer.arrayBuffer().then((ab) => {
+					const { x, y, color } = unpackMessage(ab);
+					console.log("Received message:", x, y, color);
+					handlePixelData(x, y, color);
+				});
+			} else {
+				console.warn("Unknown message format:", buffer);
+			}
+		};
 
-    // Fetch rgb values of current selected color
-    const { r, g, b } = hexToRgb(HexColorData[selectedColor]);
+		return () => socket.close();
+	}, [selectedPalette]);
 
-    const packedMessage = packMessage({ x, y, r, g, b });
-    sendMessage(packedMessage);
-  };
+	const onClick = (e: React.MouseEvent) => {
+		if (!webSocket) return;
+		if (!canvasRef) return;
+		const rect = canvasRef.current!.getBoundingClientRect();
 
-  return (
-    <div>
-      <canvas
-        ref={canvasRef}
-        width={CANVAS_SIZE}
-        height={CANVAS_SIZE}
-        style={{ border: "1px solid black" }}
-        onClick={onClick}
-      />
-      <ColorPalette
-        SelectedColor={selectedColor}
-        OnSelectedColor={setSelectedColor}
-      />
-    </div>
-  );
+		// Ensure coords are within bounds
+		const x = Math.floor((e.clientX - rect.left) / PIXEL_SIZE);
+		const y = Math.floor((e.clientY - rect.top) / PIXEL_SIZE);
+
+		const color = selectedColor;
+
+		sendMessage(x, y, color);
+	};
+
+	return (
+		<div>
+			<canvas
+				ref={canvasRef}
+				width={CANVAS_WIDTH}
+				height={CANVAS_HEIGHT}
+				style={{ border: "3px solid black" }}
+				onClick={onClick}
+			/>
+			<ColorPalette
+				SelectedColor={selectedColor}
+				SelectedPalette={selectedPalette}
+				OnSelectedColor={setSelectedColor}
+				OnSelectedPalette={setSelectedPalette}
+			/>
+		</div>
+	);
 };
 
 export default CanvasBoard;
