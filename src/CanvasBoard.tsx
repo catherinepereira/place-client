@@ -3,33 +3,71 @@ import React, { useEffect, useRef, useState } from "react";
 import { ColorIndex, PaletteName, Palettes } from "./ColorData";
 import ColorPalette from "./ColorPalette";
 
-const CANVAS_WIDTH = 1000;
-const CANVAS_HEIGHT = 1000;
+const PALETTE_INDEX_LIMIT = 15;
 const PIXEL_SIZE = 10;
+const DEBUG_ENABLED = true;
+const WARNS_BYPASS_DEBUG_LIMIT = true;
 
-const CanvasBoard: React.FC = () => {
+interface CanvasProps {
+	width: number;
+	height: number;
+}
+
+const CanvasBoard: React.FC<CanvasProps> = (props) => {
+	/** Width used for validation. Actual width is CANVAS_WIDTH_VISUAL */
+	const CANVAS_WIDTH = props.width;
+	/** Height used for validation. Actual height is CANVAS_HEIGHT_VISUAL */
+	const CANVAS_HEIGHT = props.height;
+
+	const CANVAS_WIDTH_VISUAL = CANVAS_WIDTH * PIXEL_SIZE;
+	const CANVAS_HEIGHT_VISUAL = CANVAS_HEIGHT * PIXEL_SIZE;
+
 	const canvasRef = useRef<HTMLCanvasElement>(null);
 	const [webSocket, setWebSocket] = useState<WebSocket | null>(null);
 	const [selectedColor, setSelectedColor] = useState<ColorIndex>(0);
 	const [selectedPalette, setSelectedPalette] =
 		useState<PaletteName>("default");
 
-	const packMessage = (x: number, y: number, color: number): Uint8Array => {
-		if (x < 0 || x > 1000) throw new Error("x coord is out of range");
-		if (y < 0 || y > 1000) throw new Error("y coord is out of range");
-
-		if (color < 0 || color > 15) {
-			throw new Error("Color must be 4-bit (0–15)");
+	const writeDebug = (message: string, warn?: boolean) => {
+		if (DEBUG_ENABLED || (warn && WARNS_BYPASS_DEBUG_LIMIT)) {
+			warn ? console.warn(message) : console.log(message);
 		}
+	};
 
-		const msg = new Uint8Array(5);
-		const view = new DataView(msg.buffer);
+	const validateMessage = (x: number, y: number, color: number) => {
+		if (x < 0 || x > CANVAS_WIDTH) {
+			writeDebug(`X coord is out of range: ${x}`, true);
+			return false;
+		}
+		if (y < 0 || y > CANVAS_HEIGHT) {
+			writeDebug(`Y coord is out of range: ${y}`, true);
+			return false;
+		}
+		if (color < 0 || color > PALETTE_INDEX_LIMIT) {
+			writeDebug(`Color must be 4-bit (0–15): ${color}`, true);
+			return false;
+		}
+		return true;
+	};
 
-		view.setUint16(0, x, true);
-		view.setUint16(2, y, true);
-		view.setUint8(4, color & 0x0f);
+	const packMessage = (
+		x: number,
+		y: number,
+		color: number
+	): Uint8Array | undefined => {
+		const valid = validateMessage(x, y, color);
+		if (!valid) return;
 
-		return msg;
+		const packedMessage = new Uint8Array(5);
+		const dataView = new DataView(packedMessage.buffer);
+
+		dataView.setUint16(0, x);
+		dataView.setUint16(2, y);
+		dataView.setUint8(4, color & 0x0f);
+
+		writeDebug(`[Pack Message]: DataView ${dataView}`);
+
+		return packedMessage;
 	};
 
 	const unpackMessage = (
@@ -37,8 +75,8 @@ const CanvasBoard: React.FC = () => {
 	): { x: number; y: number; color: number } => {
 		const view = new DataView(buffer);
 
-		const x = view.getUint16(0, true);
-		const y = view.getUint16(2, true);
+		const x = view.getUint16(0);
+		const y = view.getUint16(2);
 		const color = view.getUint8(4) & 0x0f;
 
 		return { x, y, color };
@@ -46,8 +84,8 @@ const CanvasBoard: React.FC = () => {
 
 	const sendMessage = (x: number, y: number, color: number) => {
 		const packedMessage = packMessage(x, y, color);
-		if (webSocket) {
-			console.log("Sending message", packedMessage);
+		if (webSocket && packedMessage) {
+			writeDebug(`[Send Message]: Sending message ${packedMessage}`);
 			webSocket.send(packedMessage);
 		}
 	};
@@ -57,11 +95,14 @@ const CanvasBoard: React.FC = () => {
 		setWebSocket(socket);
 
 		const handlePixelData = (x: number, y: number, color: number) => {
-			const ctx = canvasRef.current?.getContext("2d");
+			const valid = validateMessage(x, y, color);
+			if (!valid) return;
 
-			if (ctx) {
-				ctx.fillStyle = Palettes[selectedPalette][color];
-				ctx.fillRect(
+			const context = canvasRef.current?.getContext("2d");
+
+			if (context) {
+				context.fillStyle = Palettes[selectedPalette][color];
+				context.fillRect(
 					x * PIXEL_SIZE,
 					y * PIXEL_SIZE,
 					PIXEL_SIZE,
@@ -70,11 +111,11 @@ const CanvasBoard: React.FC = () => {
 			}
 		};
 
-		socket.onopen = () => console.log("Connected to WebSocket.");
+		socket.onopen = () => writeDebug("Connected to WebSocket.");
 		socket.onmessage = (event) =>
-			console.log("On message event:", event.data);
-		socket.onerror = (e) => console.error("WebSocket error:", e);
-		socket.onclose = () => console.warn("WebSocket closed.");
+			writeDebug(`On message event: ${event.data}`);
+		socket.onerror = (e) => writeDebug(`WebSocket error: ${e}`);
+		socket.onclose = () => writeDebug(`WebSocket closed.`, true);
 
 		socket.onmessage = (event) => {
 			const buffer = event.data;
@@ -82,11 +123,13 @@ const CanvasBoard: React.FC = () => {
 			if (buffer instanceof Blob) {
 				buffer.arrayBuffer().then((ab) => {
 					const { x, y, color } = unpackMessage(ab);
-					console.log("Received message:", x, y, color);
+					writeDebug(
+						`[On Message]: Received message: ${x}, ${y}, ${color}`
+					);
 					handlePixelData(x, y, color);
 				});
 			} else {
-				console.warn("Unknown message format:", buffer);
+				writeDebug(`Unknown message format: ${buffer}`, true);
 			}
 		};
 
@@ -99,10 +142,16 @@ const CanvasBoard: React.FC = () => {
 		const rect = canvasRef.current!.getBoundingClientRect();
 
 		// Ensure coords are within bounds
-		const x = Math.floor((e.clientX - rect.left) / PIXEL_SIZE);
-		const y = Math.floor((e.clientY - rect.top) / PIXEL_SIZE);
-
+		const xOffset = e.clientX - rect.left;
+		const yOffset = e.clientY - rect.top;
+		const x = Math.floor(xOffset / PIXEL_SIZE);
+		const y = Math.floor(yOffset / PIXEL_SIZE);
 		const color = selectedColor;
+
+		const valid = validateMessage(x, y, color);
+		if (!valid) return;
+
+		writeDebug(`[On Click]: X from client: ${x} \n Y from client: ${y}`);
 
 		sendMessage(x, y, color);
 	};
@@ -111,8 +160,8 @@ const CanvasBoard: React.FC = () => {
 		<div>
 			<canvas
 				ref={canvasRef}
-				width={CANVAS_WIDTH}
-				height={CANVAS_HEIGHT}
+				width={CANVAS_WIDTH_VISUAL}
+				height={CANVAS_HEIGHT_VISUAL}
 				style={{ border: "3px solid black" }}
 				onClick={onClick}
 			/>
