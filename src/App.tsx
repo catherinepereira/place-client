@@ -2,7 +2,7 @@ import React from "react";
 import CanvasBoard from "./CanvasBoard";
 
 const App: React.FC = () => {
-	return <CanvasBoard width={1000} height={1000} />;
+	return <CanvasBoard width={500} height={500} />;
 };
 
 export default App;

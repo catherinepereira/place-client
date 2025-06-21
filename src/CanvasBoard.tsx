@@ -5,6 +5,7 @@ import ColorPalette from "./ColorPalette";
 
 const PALETTE_INDEX_LIMIT = 15;
 const PIXEL_SIZE = 10;
+const BINARY_MESSAGE_SIZE = 5;
 const DEBUG_ENABLED = true;
 const WARNS_BYPASS_DEBUG_LIMIT = true;
 
@@ -22,9 +23,11 @@ const CanvasBoard: React.FC<CanvasProps> = (props) => {
 	const CANVAS_WIDTH_VISUAL = CANVAS_WIDTH * PIXEL_SIZE;
 	const CANVAS_HEIGHT_VISUAL = CANVAS_HEIGHT * PIXEL_SIZE;
 
+	const board: number[][] = [];
+
 	const canvasRef = useRef<HTMLCanvasElement>(null);
 	const [webSocket, setWebSocket] = useState<WebSocket | null>(null);
-	const [selectedColor, setSelectedColor] = useState<ColorIndex>(0);
+	const [selectedColor, setSelectedColor] = useState<ColorIndex>(13);
 	const [selectedPalette, setSelectedPalette] =
 		useState<PaletteName>("default");
 
@@ -82,6 +85,29 @@ const CanvasBoard: React.FC<CanvasProps> = (props) => {
 		return { x, y, color };
 	};
 
+	const unpackBoardMessage = (buffer: ArrayBuffer): void => {
+		const view = new DataView(buffer);
+		const packedWidth = Math.ceil(props.width / 2);
+
+		for (let y = 0; y < props.height; y++) {
+			board[y] = [];
+			for (let x = 0; x < props.width; x += 2) {
+				const i = y * packedWidth + (x >> 1);
+				const byte = view.getUint8(i);
+				const highColor = (byte >> 4) & 0x0f;
+				const lowColor = byte & 0x0f;
+
+				board[y][x] = highColor;
+				if (x + 1 < props.width) {
+					board[y][x + 1] = lowColor;
+				}
+
+				handlePixelData(x, y, highColor);
+				handlePixelData(x + 1, y, lowColor);
+			}
+		}
+	};
+
 	const sendMessage = (x: number, y: number, color: number) => {
 		const packedMessage = packMessage(x, y, color);
 		if (webSocket && packedMessage) {
@@ -90,26 +116,26 @@ const CanvasBoard: React.FC<CanvasProps> = (props) => {
 		}
 	};
 
+	const handlePixelData = (x: number, y: number, color: number) => {
+		const valid = validateMessage(x, y, color);
+		if (!valid) return;
+
+		const context = canvasRef.current?.getContext("2d");
+
+		if (context) {
+			context.fillStyle = Palettes[selectedPalette][color];
+			context.fillRect(
+				x * PIXEL_SIZE,
+				y * PIXEL_SIZE,
+				PIXEL_SIZE,
+				PIXEL_SIZE
+			);
+		}
+	};
+
 	useEffect(() => {
 		const socket = new WebSocket("ws://localhost:8080/ws");
 		setWebSocket(socket);
-
-		const handlePixelData = (x: number, y: number, color: number) => {
-			const valid = validateMessage(x, y, color);
-			if (!valid) return;
-
-			const context = canvasRef.current?.getContext("2d");
-
-			if (context) {
-				context.fillStyle = Palettes[selectedPalette][color];
-				context.fillRect(
-					x * PIXEL_SIZE,
-					y * PIXEL_SIZE,
-					PIXEL_SIZE,
-					PIXEL_SIZE
-				);
-			}
-		};
 
 		socket.onopen = () => writeDebug("Connected to WebSocket.");
 		socket.onmessage = (event) =>
@@ -121,12 +147,16 @@ const CanvasBoard: React.FC<CanvasProps> = (props) => {
 			const buffer = event.data;
 
 			if (buffer instanceof Blob) {
-				buffer.arrayBuffer().then((ab) => {
-					const { x, y, color } = unpackMessage(ab);
-					writeDebug(
-						`[On Message]: Received message: ${x}, ${y}, ${color}`
-					);
-					handlePixelData(x, y, color);
+				buffer.arrayBuffer().then((buffer) => {
+					if (buffer.byteLength === BINARY_MESSAGE_SIZE) {
+						const { x, y, color } = unpackMessage(buffer);
+						writeDebug(
+							`[On Message]: Received message: ${x}, ${y}, ${color}`
+						);
+						handlePixelData(x, y, color);
+					} else {
+						unpackBoardMessage(buffer);
+					}
 				});
 			} else {
 				writeDebug(`Unknown message format: ${buffer}`, true);

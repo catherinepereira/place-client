@@ -4,6 +4,7 @@ export type PaletteName = "default"; //| "pastel" | "retro";
 
 export const Palettes: Record<PaletteName, ColorPalette> = {
 	default: [
+		"#f9fffe",
 		"#b02e26",
 		"#f9801d",
 		"#fed83d",
@@ -19,7 +20,6 @@ export const Palettes: Record<PaletteName, ColorPalette> = {
 		"#1d1d21",
 		"#474f52",
 		"#9d9d97",
-		"#f9fffe",
 	],
 	// pastel: [
 	// 	"#ffd1dc",
